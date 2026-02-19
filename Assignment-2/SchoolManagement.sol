@@ -1,206 +1,138 @@
-
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-contract SchoolManagement {
+import "./OmoboiToken.sol";
 
+contract SimpleSchool {
+
+    // Student data
     struct Student {
-        uint256 id;
+        address wallet;
         string name;
         uint256 level;
-        address wallet;
-        bool isRegistered;
-        bool hasPaidFees;
-        uint256 feesPaid;
-        uint256 paymentTimestamp;
+        bool hasPaid;
+        uint256 paidAt;
     }
 
+    // Staff data
     struct Staff {
-        uint256 id;
-        string name;
-        string role;
         address wallet;
-        bool isRegistered;
+        string name;
         uint256 salary;
         bool isPaid;
-        uint256 lastPaidTimestamp;
+        uint256 paidAt;
     }
 
+    // Store students and staff by ID
     mapping(uint256 => Student) public students;
     mapping(uint256 => Staff) public staffs;
 
+    // Count total students and staff
     uint256 public studentCount;
     uint256 public staffCount;
 
-    mapping(uint256 => uint256) public levelFees;
-
+    // Token and owner
+    OmoboiToken public token;
     address public owner;
 
-    event StudentRegistered(uint256 indexed studentId, string name, uint256 level);
-    event FeesPaid(uint256 indexed studentId, uint256 amount, uint256 timestamp);
-    event StaffRegistered(uint256 indexed staffId, string name, string role);
-    event StaffPaid(uint256 indexed staffId, uint256 amount, uint256 timestamp);
-
-    constructor() {
+    constructor(address _tokenAddress) {
+        token = OmoboiToken(_tokenAddress);
         owner = msg.sender;
-        levelFees[100] = 0.1 ether;
-        levelFees[200] = 0.15 ether;
-        levelFees[300] = 0.2 ether;
-        levelFees[400] = 0.25 ether;
     }
 
-    function registerStudent(
-        string calldata _name,
-        uint256 _level,
-        address _wallet
-    ) external {
-        require(_level == 100 || _level == 200 || _level == 300 || _level == 400, "Invalid level");
-        require(_wallet != address(0), "Invalid wallet address");
-
-        studentCount++;
-        uint256 newId = studentCount;
-
-        students[newId] = Student({
-            id: newId,
-            name: _name,
-            level: _level,
-            wallet: _wallet,
-            isRegistered: true,
-            hasPaidFees: false,
-            feesPaid: 0,
-            paymentTimestamp: 0
-        });
-
-        emit StudentRegistered(newId, _name, _level);
+    // 1. Register a student
+    function registerStudent(string memory _name, uint256 _level) external {
+        studentCount = studentCount + 1;
+        
+        students[studentCount].wallet = msg.sender;
+        students[studentCount].name = _name;
+        students[studentCount].level = _level;
+        students[studentCount].hasPaid = false;
+        students[studentCount].paidAt = 0;
     }
 
-    function paySchoolFees(uint256 _studentId) external payable {
-        Student storage student = students[_studentId];
+    // 2. Student pays school fees
+    function payStudentFee(uint256 _id, uint256 _amount) external {
+        // Get reference to student (storage = can modify)
+        Student storage s = students[_id];
+        
+        // Check student exists and hasn't paid
+        require(s.wallet != address(0), "Student not found");
+        require(s.hasPaid == false, "Already paid");
+        require(msg.sender == s.wallet, "Not your account");
 
-        require(student.isRegistered, "Student not registered");
-        require(!student.hasPaidFees, "Fees already paid");
-        require(msg.value >= levelFees[student.level], "Insufficient payment");
+        // Check fee amount based on level
+        uint256 requiredFee = 0;
+        if (s.level == 100) requiredFee = 1000 * 10**8;
+        else if (s.level == 200) requiredFee = 1500 * 10**8;
+        else if (s.level == 300) requiredFee = 2000 * 10**8;
+        else if (s.level == 400) requiredFee = 2500 * 10**8;
+        
+        require(_amount >= requiredFee, "Wrong fee amount");
 
-        student.hasPaidFees = true;
-        student.feesPaid = msg.value;
-        student.paymentTimestamp = block.timestamp;
-
-        emit FeesPaid(_studentId, msg.value, block.timestamp);
+        // Pull tokens from student to school
+        require(token.transferFrom(msg.sender, address(this), _amount), "Transfer failed");
+        
+        // Update student record
+        s.hasPaid = true;
+        s.paidAt = block.timestamp;
     }
 
-    function getStudent(uint256 _studentId) external view returns (
-        uint256 id,
+    // 3. View student details
+    function getStudent(uint256 _id) external view returns (
+        address wallet,
         string memory name,
         uint256 level,
-        address wallet,
-        bool isRegistered,
-        bool hasPaidFees,
-        uint256 feesPaid,
-        uint256 paymentTimestamp
+        bool hasPaid,
+        uint256 paidAt
     ) {
-        Student storage student = students[_studentId];
-        require(student.isRegistered, "Student not found");
-
-        return (
-            student.id,
-            student.name,
-            student.level,
-            student.wallet,
-            student.isRegistered,
-            student.hasPaidFees,
-            student.feesPaid,
-            student.paymentTimestamp
-        );
+        // Get copy of student (memory = read only)
+        Student memory s = students[_id];
+        return (s.wallet, s.name, s.level, s.hasPaid, s.paidAt);
     }
 
-    function registerStaff(
-        string calldata _name,
-        string calldata _role,
-        address _wallet,
-        uint256 _salary
-    ) external {
-        require(msg.sender == owner, "Only admin can register staff");
-        require(_wallet != address(0), "Invalid wallet address");
-
-        staffCount++;
-        uint256 newId = staffCount;
-
-        staffs[newId] = Staff({
-            id: newId,
-            name: _name,
-            role: _role,
-            wallet: _wallet,
-            isRegistered: true,
-            salary: _salary,
-            isPaid: false,
-            lastPaidTimestamp: 0
-        });
-
-        emit StaffRegistered(newId, _name, _role);
+    // 4. Register a staff (owner only)
+    function registerStaff(string memory _name, uint256 _salary, address _wallet) external {
+        require(msg.sender == owner, "Only owner can register staff");
+        
+        staffCount = staffCount + 1;
+        
+        staffs[staffCount].wallet = _wallet;
+        staffs[staffCount].name = _name;
+        staffs[staffCount].salary = _salary;
+        staffs[staffCount].isPaid = false;
+        staffs[staffCount].paidAt = 0;
     }
 
-    function payStaff(uint256 _staffId) external {
-        require(msg.sender == owner, "Only admin can pay staff");
+    // 5. Pay staff salary (owner only)
+    function payStaff(uint256 _id) external {
+        require(msg.sender == owner, "Only owner can pay staff");
+        
+        // Get reference to staff (storage = can modify)
+        Staff storage s = staffs[_id];
+        
+        require(s.wallet != address(0), "Staff not found");
+        require(s.isPaid == false, "Already paid");
+        require(token.balanceOf(address(this)) >= s.salary, "Not enough tokens");
 
-        Staff storage staff = staffs[_staffId];
-        require(staff.isRegistered, "Staff not registered");
-        require(address(this).balance >= staff.salary, "Contract has insufficient funds");
-
-        staff.isPaid = true;
-        staff.lastPaidTimestamp = block.timestamp;
-
-        (bool success, ) = staff.wallet.call{value: staff.salary}("");
-        require(success, "Payment failed");
-
-        emit StaffPaid(_staffId, staff.salary, block.timestamp);
+        // Send tokens to staff
+        require(token.transfer(s.wallet, s.salary), "Transfer failed");
+        
+        // Update staff record
+        s.isPaid = true;
+        s.paidAt = block.timestamp;
     }
 
-    function getStaff(uint256 _staffId) external view returns (
-        uint256 id,
-        string memory name,
-        string memory role,
+    // 6. View staff details
+    function getStaff(uint256 _id) external view returns (
         address wallet,
-        bool isRegistered,
+        string memory name,
         uint256 salary,
         bool isPaid,
-        uint256 lastPaidTimestamp
+        uint256 paidAt
     ) {
-        Staff storage staff = staffs[_staffId];
-        require(staff.isRegistered, "Staff not found");
-
-        return (
-            staff.id,
-            staff.name,
-            staff.role,
-            staff.wallet,
-            staff.isRegistered,
-            staff.salary,
-            staff.isPaid,
-            staff.lastPaidTimestamp
-        );
-    }
-
-    function getAllStaffIds() external view returns (uint256[] memory) {
-        uint256[] memory ids = new uint256[](staffCount);
-        for (uint256 i = 1; i <= staffCount; i++) {
-            ids[i - 1] = i;
-        }
-        return ids;
-    }
-
-    receive() external payable {}
-
-    fallback() external payable {}
-
-    function withdrawFunds(uint256 _amount) external {
-        require(msg.sender == owner, "Only admin");
-        require(address(this).balance >= _amount, "Insufficient contract balance");
-
-        (bool success, ) = payable(owner).call{value: _amount}("");
-        require(success, "Withdrawal failed");
-    }
-
-    function getContractBalance() external view returns (uint256) {
-        return address(this).balance;
+        // Get copy of staff (memory = read only)
+        Staff memory s = staffs[_id];
+        return (s.wallet, s.name, s.salary, s.isPaid, s.paidAt);
     }
 }
