@@ -11,7 +11,7 @@ contract OmoboiToken{
 
     // balanceOf Function
     mapping(address => uint256) public balanceOf;
-
+    
     // Allowance Function
     mapping(address => mapping(address=> uint256)) public allowance;
 
